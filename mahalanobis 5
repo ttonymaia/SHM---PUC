@@ -1,0 +1,72 @@
+% --- SCRIPT DE DETECÇÃO (MÉTODO CLÁSSICO - MAHALANOBIS) ---
+clear;
+clc;
+close all;
+fprintf("Iniciando Detecção com Distância de Mahalanobis (em Features AR-30)...\n");
+
+%% --- PASSO 1: Carregar as Features salvas ---
+try
+    load('features_AR30_REAL.mat'); % Carrega 'all_features' e 'all_labels'
+    fprintf("Arquivo 'features_AR30_REAL.mat' carregado.\n");
+    fprintf("Tamanho da matriz de features: %d amostras x %d features\n", size(all_features, 1), size(all_features, 2));
+catch
+    fprintf("ERRO: Não achei o arquivo 'features_AR30_REAL.mat'.\n");
+    fprintf("Por favor, certifique-se de que o script de extração anterior terminou com sucesso.\n");
+    return;
+end
+
+%% --- PASSO 2: Definir Grupos (Saudável vs. Teste) ---
+% Com base no Artigo-Base e no seu dataset, os estados saudáveis são 1, 2, 8, 9
+healthyStates = [1, 2, 8, 9];
+statesToTest = [1, 2, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+
+% Separar as features de treino (apenas as saudáveis)
+healthy_idx = ismember(all_labels, healthyStates);
+healthy_features = all_features(healthy_idx, :);
+
+fprintf("Dados de treino (saudáveis) definidos para %d amostras.\n", size(healthy_features, 1));
+
+%% --- PASSO 3: Calcular Distância de Mahalanobis ---
+% Esta função calcula a distância quadrada (D2) de cada amostra em
+% 'all_features' em relação ao "centro de normalidade" definido por 'healthy_features'.
+fprintf("Calculando Distâncias de Mahalanobis...\n");
+D2 = mahal(all_features, healthy_features);
+
+%% --- PASSO 4: Calcular a Média por Estado e o Limite ---
+mean_D2_per_state = zeros(length(statesToTest), 1);
+state_labels = {};
+
+for i = 1:length(statesToTest)
+    state = statesToTest(i);
+    idx = (all_labels == state);
+    
+    % Calcula a média das 10 runs para este estado
+    mean_D2_per_state(i) = mean(D2(idx));
+    state_labels{i} = sprintf('state#%02d', state);
+end
+
+% Definir o Limite de Dano (Threshold)
+% O limite é a maior distância encontrada em QUALQUER amostra saudável
+D2_healthy_samples = D2(healthy_idx);
+threshold = max(D2_healthy_samples) * 1.1; % 10% de margem
+
+fprintf("Cálculo concluído. Gerando gráfico...\n");
+
+%% --- PASSO 5: Plotar o Gráfico de Detecção Final ---
+figure;
+bar(mean_D2_per_state, 'FaceColor', [0.4660 0.6740 0.1880]); % Verde
+hold on;
+
+% Plotar o limite de dano
+plot(xlim, [threshold threshold], 'r--', 'LineWidth', 2);
+
+title('Detecção de Dano (Canal 2) com AR(30) + Dist. Mahalanobis');
+xlabel('Número do Estado (State condition #)');
+ylabel('Distância de Mahalanobis Média (D²)');
+legend('Distância Média (D²)', 'Limite de Dano');
+grid on;
+set(gca, 'xtick', 1:length(statesToTest));
+set(gca, 'XTickLabel', state_labels);
+xtickangle(45);
+
+fprintf('Processo concluído!\n');
