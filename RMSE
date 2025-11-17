@@ -1,0 +1,127 @@
+
+Reconstrução, RMSE médio para cada estado e plotar o gráfico de battas final que prova a detecção de dano. 
+
+% --- SCRIPT DE DETECÇÃO FINAL (USA O MODELO REAL) ---
+clear;
+clc;
+close all;
+fprintf("Iniciando Pipeline de Detecção com Dados e Modelo REAIS...\n");
+
+%% --- PASSO 1: Carregar o NOVO Modelo Treinado ---
+try
+    % Carrega 'net_real', 'mu_real', 'sig_real', 'healthyStatesIdx', etc.
+    load('meuModeloTreinado_REAL.mat'); 
+    fprintf("Modelo 'net_real' e dados de normalização carregados.\n");
+catch
+    fprintf("ERRO: Não achei o arquivo 'meuModeloTreinado_REAL.mat'.\n");
+    fprintf("Por favor, certifique-se de que o treino anterior terminou e salvou o arquivo.\n");
+    return;
+end
+
+%% --- PASSO 2: Carregar Dataset REAL na matriz data{s,h} ---
+basePath = '/MATLAB Drive/2_Three_Story_Building/Data';
+folders = dir(basePath);
+folders = folders([folders.isdir]);
+
+stateFolders = {};
+for i = 1:length(folders)
+    nm = folders(i).name;
+    if startsWith(nm, "state#")
+        stateFolders{end+1} = nm;
+    end
+end
+numStates = length(stateFolders);
+numHistories = 10;
+fprintf("Encontrados %d estados reais.\n", numStates);
+
+data = cell(numStates, numHistories);
+try
+    for s = 1:numStates
+        statePath = fullfile(basePath, stateFolders{s});
+        files = dir(fullfile(statePath, "*.txt"));
+        fileNames = sort({files.name}); % data11..data20
+        for h = 1:numHistories
+            data{s,h} = load(fullfile(statePath, fileNames{h}));
+        end
+    end
+    fprintf("Dataset REAL carregado com sucesso.\n");
+catch
+    fprintf('ERRO ao carregar dados reais. Verifique o caminho: %s\n', basePath);
+    return;
+end
+
+%% --- PASSO 3: Calcular Erro de Reconstrução (RMSE) para TODOS os estados ---
+% (Usando o Canal 2, o mesmo do treino)
+
+fprintf("Calculando Erro de Reconstrução (RMSE) para todos os estados...\n");
+
+% Lista dos estados que você TEM (pulando 3-7)
+statesToTest = [1, 2, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+reconstructionErrors = zeros(max(statesToTest), 1); % Vetor para guardar os erros médios
+
+for i = statesToTest
+    stateErrors_all_runs = []; % Guarda o erro de todas as 10 runs
+    folderName = sprintf('state#%02d', i);
+        
+    for j = 1:numHistories
+        % O seu modelo foi treinado no Canal 2 (arquivos 11-20)
+        % Então, data{i, j} já é o sinal correto (data11.txt, etc.)
+        signal_raw = data{i,j}(:);
+        
+        % 1. Normalizar o sinal com 'mu_real' e 'sig_real' do treino
+        signal_norm = (signal_raw - mu_real) / sig_real;
+        
+        % 2. Preparar sequências de teste
+        X_test = {};
+        for k = 1:hop:(length(signal_norm)-seqLength+1)
+             janela = signal_norm(k:k+seqLength-1)'; % Formato 1x200
+             X_test{end+1, 1} = janela;
+        end
+
+        if isempty(X_test)
+            continue; % Pula se o arquivo for muito curto
+        end
+        
+        % 3. Prever com o 'net_real'
+        Y_pred = predict(net_real, X_test);
+        
+        % 4. Calcular Erro (RMSE)
+        errors = cellfun(@(real, pred) sqrt(mean((real - pred).^2)), X_test, Y_pred);
+        stateErrors_all_runs = [stateErrors_all_runs; mean(errors)]; % Guarda o erro médio desta run
+    end
+    
+    % 5. O erro final do estado é a MÉDIA das 10 runs
+    if ~isempty(stateErrors_all_runs)
+        reconstructionErrors(i) = mean(stateErrors_all_runs); 
+        fprintf("  Erro Médio para Estado #%02d: %.6f\n", i, reconstructionErrors(i));
+    else
+        fprintf("  Aviso: Nenhum dado processado para o Estado #%02d.\n", i);
+    end
+end
+fprintf("Cálculo de erros concluído.\n");
+
+%% --- PASSO 4: PLOTAR O GRÁFICO DE DETECÇÃO FINAL ---
+fprintf('Gerando gráfico de detecção final...\n');
+
+figure;
+% Filtra os zeros dos estados que não testamos
+statesPresentIdx = statesToTest;
+errorsPresent = reconstructionErrors(statesPresentIdx);
+
+bar(statesPresentIdx, errorsPresent, 'FaceColor', [0 0.4470 0.7410]); % Azul
+hold on;
+
+% Definir o limite de dano (baseado nos estados saudáveis REAIS)
+threshold = max(reconstructionErrors(healthyStatesIdx)) * 1.1; % 10% de margem
+plot(xlim, [threshold threshold], 'r--', 'LineWidth', 2);
+
+title('Detecção de Dano (Canal 2) com Modelo LSTM-AE Real');
+xlabel('Número do Estado (State condition #)');
+ylabel('Erro de Reconstrução Médio (RMSE)');
+legend('Erro (RMSE)', 'Limite de Dano');
+grid on;
+set(gca, 'xtick', statesToTest);
+set(gca, 'XTickLabel', sprintfc('state#%02d', statesToTest));
+xtickangle(45);
+
+fprintf('Processo concluído! Este é o seu gráfico de resultados principal.\n');
