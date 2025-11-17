@@ -1,0 +1,89 @@
+Metodo hibrido 
+
+% --- SCRIPT DE EXTRAÇÃO DE FEATURES (MÉTODO CLÁSSICO) ---
+clear;
+clc;
+close all;
+fprintf("Iniciando Extração de Features (AR-30) com Dados REAIS...\n");
+
+%% --- PASSO 1: Carregar Dataset REAL na matriz data{s,h} ---
+basePath = '/MATLAB Drive/2_Three_Story_Building/Data';
+folders = dir(basePath);
+folders = folders([folders.isdir]);
+
+stateFolders = {};
+for i = 1:length(folders)
+    nm = folders(i).name;
+    if startsWith(nm, "state#")
+        stateFolders{end+1} = nm;
+    end
+end
+numStates = length(stateFolders);
+numHistories = 10;
+fprintf("Encontrados %d estados reais.\n", numStates);
+
+data = cell(numStates, numHistories);
+try
+    for s = 1:numStates
+        statePath = fullfile(basePath, stateFolders{s});
+        files = dir(fullfile(statePath, "*.txt"));
+        fileNames = sort({files.name}); % data11..data20
+        for h = 1:numHistories
+            data{s,h} = load(fullfile(statePath, fileNames{h}));
+        end
+    end
+    fprintf("Dataset REAL carregado com sucesso.\n");
+catch
+    fprintf('ERRO ao carregar dados reais. Verifique o caminho: %s\n', basePath);
+    return;
+end
+
+%% --- PASSO 2: Extração de Features (AR-30) ---
+% (Usando o Canal 2, o mesmo do treino anterior)
+
+fprintf("Extraindo parâmetros AR(30) para todos os estados...\n");
+
+channelOffset = 10; % Canal 2 = arquivos data11.txt a data20.txt
+ar_order = 30; % Ordem do modelo AR, como no Artigo-Base [cite: 1315]
+
+% Vamos guardar as features (parâmetros) e os labels (estado)
+all_features = [];
+all_labels = [];
+
+% Estados que você TEM
+statesToProcess = [1, 2, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]; 
+
+for i = statesToProcess
+    fprintf("  Processando Estado #%02d...\n", i);
+    
+    for j = 1:numHistories
+        % Pega o sinal do Canal 2 (data{i, j} já é o Canal 2)
+        signal_raw = data{i,j}(:);
+        
+        % 1. Remover a média (importante para AR)
+        signal = signal_raw - mean(signal_raw);
+        
+        % 2. Calcular os parâmetros AR(30)
+        % Usamos 'ar' da Signal Processing Toolbox
+        % 'model' contém os parâmetros [a1, a2, ..., a30]
+        try
+            model = ar(signal, ar_order, 'yw');
+            ar_params = model.A(2:end); % Pega os 30 parâmetros (ignora o '1')
+            
+            % 3. Salvar as features e o label
+            all_features = [all_features; ar_params]; % Adiciona a linha de 30 features
+            all_labels = [all_labels; i]; % Adiciona o número do estado
+            
+        catch
+            fprintf("Aviso: Falha ao calcular AR para estado %d, run %d. Pulando.\n", i, j);
+        end
+    end
+end
+
+fprintf("Extração de features concluída.\n");
+fprintf("Tamanho da matriz de features: %d amostras x %d features\n", size(all_features, 1), size(all_features, 2));
+
+%% --- PASSO 3: Salvar as Features ---
+save('features_AR30_REAL.mat', 'all_features', 'all_labels');
+fprintf("Features salvas em 'features_AR30_REAL.mat'.\n");
+fprintf("Próximo passo: Usar a Distância de Mahalanobis (como na Fig. 82) nessas features.\n");
