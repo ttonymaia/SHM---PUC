@@ -1,0 +1,114 @@
+Modelo treinamento usando dados reais. 
+
+% --- SCRIPT DE TREINO (VERSÃO CORRIGIDA E SEGURA) ---
+clear;
+clc;
+close all;
+fprintf("Iniciando Pipeline de Treinamento com Dados REAIS...\n");
+
+%% --- PASSO 1: Carregar Dataset REAL na matriz data{s,h} ---
+basePath = '/MATLAB Drive/2_Three_Story_Building/Data';
+folders = dir(basePath);
+folders = folders([folders.isdir]);
+
+stateFolders = {};
+for i = 1:length(folders)
+    nm = folders(i).name;
+    if startsWith(nm, "state#")
+        stateFolders{end+1} = nm;
+    end
+end
+numStates = length(stateFolders);
+numHistories = 10;
+fprintf("Encontrados %d estados reais.\n", numStates);
+
+data = cell(numStates, numHistories);
+for s = 1:numStates
+    statePath = fullfile(basePath, stateFolders{s});
+    files = dir(fullfile(statePath, "*.txt"));
+    fileNames = sort({files.name}); % data11..data20
+    for h = 1:numHistories
+        data{s,h} = load(fullfile(statePath, fileNames{h}));
+    end
+end
+fprintf("Dataset REAL carregado com sucesso.\n");
+
+%% --- PASSO 2: Definir Dados de Treino (Canal 2 Saudável) ---
+healthyStatesIdx = [1, 2, 8, 9]; 
+channelOffset = 10; % Canal 2 = arquivos data11.txt a data20.txt
+fprintf("Estados saudáveis para treino: %s\n", num2str(healthyStatesIdx));
+fprintf("Usando Canal 2 (arquivos %d-%d) para o treino.\n", channelOffset+1, channelOffset+10);
+
+trainDataRaw = [];
+for s = healthyStatesIdx
+    for h = 1:numHistories
+        trainDataRaw = [trainDataRaw; data{s,h}(:)];
+    end
+end
+
+mu_real = mean(trainDataRaw);
+sig_real = std(trainDataRaw);
+fprintf("'mu_real' e 'sig_real' calculados com sucesso.\n");
+
+%% --- PASSO 3: Preparar Sequências de Treino (X_train) ---
+seqLength = 200;
+hop = 20;
+X_train = {};
+Y_train = {};
+
+for s = healthyStatesIdx
+    for h = 1:numHistories
+        signal_norm = (data{s,h}(:) - mu_real) / sig_real;
+        for k = 1:hop:(length(signal_norm)-seqLength+1)
+             janela = signal_norm(k:k+seqLength-1)'; 
+             X_train{end+1, 1} = janela;
+             Y_train{end+1, 1} = janela; 
+        end
+    end
+end
+fprintf("Dados de treino prontos: %d sequências reais.\n", length(X_train));
+
+%% --- PASSO 4: Definir Arquitetura da Rede ---
+fprintf("Definindo arquitetura do LSTM-Autoencoder...\n");
+numFeatures = 1;
+hiddenUnitsEncoder = 128; 
+hiddenUnitsDecoder = 128; 
+bottleneckSize = 32;      
+layers = [
+    sequenceInputLayer(numFeatures, 'Name', 'Entrada')
+    lstmLayer(hiddenUnitsEncoder, 'Name', 'LSTM-Encoder')
+    fullyConnectedLayer(bottleneckSize, 'Name', 'Bottleneck-FC1')
+    reluLayer('Name', 'Bottleneck-ReLU')
+    fullyConnectedLayer(hiddenUnitsDecoder, 'Name', 'Decoder-FC1')
+    lstmLayer(hiddenUnitsDecoder, 'Name', 'LSTM-Decoder')
+    fullyConnectedLayer(numFeatures, 'Name', 'Saída-FC')
+    regressionLayer('Name', 'Saída-Regression')
+];
+
+%% --- PASSO 5: TREINAR A NOVA REDE (COM SINTAXE CORRIGIDA) ---
+fprintf("Iniciando NOVO treinamento (50 épocas, com checkpoints)...\n");
+
+% Criar pasta para salvar checkpoints
+checkpointFolder = '/MATLAB Drive/checkpoints';
+if ~exist(checkpointFolder, "dir")
+    mkdir(checkpointFolder);
+end
+
+% **** CORREÇÃO DA SINTAXE ****
+options = trainingOptions('adam', ...
+    'MaxEpochs', 50, ... % Suas 50 épocas
+    'MiniBatchSize', 64, ...
+    'Shuffle', 'every-epoch', ...
+    'Plots', 'training-progress', ... 
+    'Verbose', 0, ... % <-- A vírgula está AQUI
+    'CheckpointPath', checkpointFolder); % <-- Checkpoint DENTRO da função
+
+[net_real, info_real] = trainNetwork(X_train, Y_train, layers, options);
+% ******************************
+
+fprintf("Treinamento com dados REAIS concluído.\n");
+
+%% --- PASSO 6: Salvar o NOVO Modelo ---
+save('meuModeloTreinado_REAL.mat', 'net_real', 'mu_real', 'sig_real', 'healthyStatesIdx', 'channelOffset', 'seqLength', 'hop');
+fprintf("NOVO modelo ('net_real') salvo em 'meuModeloTreinado_REAL.mat'.\n");
+fprintf("Processo concluído!\n");
