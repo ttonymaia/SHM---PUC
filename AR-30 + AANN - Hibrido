@@ -1,0 +1,176 @@
+% --- SCRIPT DE DETECÇÃO (MÉTODO HÍBRIDO - AR-30 + AANN) ---
+clear;
+clc;
+close all;
+fprintf("Iniciando Detecção com AANN (em Features AR-30)...\n");
+
+%% --- PASSO 1: Carregar as Features salvas ---
+try
+    load('features_AR30_REAL.mat'); % Carrega 'all_features' e 'all_labels'
+    fprintf("Arquivo 'features_AR30_REAL.mat' carregado.\n");
+catch
+    fprintf("ERRO: Não achei o arquivo 'features_AR30_REAL.mat'.\n");
+    return;
+end
+
+%% --- PASSO 2: Definir Grupos e Normalizar Dados ---
+healthyStates = [1, 2, 8, 9];
+statesToTest = [1, 2, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+
+% Separar as features de treino (apenas as saudáveis)
+healthy_idx = ismember(all_labels, healthyStates);
+healthy_features = all_features(healthy_idx, :);
+
+% NORMALIZAÇÃO (Obrigatório para Redes Neurais)
+% (features - média) / desvio_padrão
+[healthy_features_norm, mu, sig] = normalize(healthy_features);
+
+% Transpor os dados para o formato que a rede espera (colunas = amostras)
+% Formato: [30 features x 40 amostras]
+healthy_features_norm_T = healthy_features_norm';
+
+fprintf("Dados de treino (saudáveis) definidos e normalizados.\n");
+
+%% --- PASSO 3: Definir e Treinar a AANN (Autoencoder) ---
+% Vamos replicar a AANN da Seção 6.1 e Figura 77
+% É um autoencoder com um "gargalo" (bottleneck)
+hiddenSize = 10; % Tamanho do gargalo (pode ajustar, ex: 10, 5, 2)
+
+% 'autoenc' da Deep Learning Toolbox cria a AANN
+autoenc = trainAutoencoder(healthy_features_norm_T, hiddenSize, ...
+    'MaxEpochs', 100, ...
+    'L2WeightRegularization', 0.01, ... % Ajuda a evitar overfitting
+    'SparsityRegularization', 4, ...    % Ajuda a aprender features
+    'SparsityProportion', 0.15, ...
+    'ShowProgressWindow', true);
+
+fprintf("Treinamento da AANN concluído.\n");
+
+%% --- PASSO 4: Calcular o Erro (Novelty Index) para TODOS os estados ---
+fprintf("Calculando Erro de Reconstrução (NI) para todos os estados...\n");
+noveltyIndex_per_state = zeros(length(statesToTest), 1);
+state_labels = {};
+
+% Normalizar TODAS as features (saudáveis + danificadas)
+all_features_norm = normalize(all_features, 'center', mu, 'scale', sig);
+all_features_norm_T = all_features_norm';
+
+% 1. Passar TODAS as features pela rede treinada
+features_reconstruidas = predict(autoenc, all_features_norm_T);
+
+% 2. Calcular o Erro de Reconstrução (RMSE) para CADA amostra
+% (Este é o Novelty Index - NI)
+errors_por_amostra = sqrt(mean((all_features_norm_T - features_reconstruidas).^2, 1));
+
+% 3. Calcular a média por estado
+for i = 1:length(statesToTest)
+    state = statesToTest(i);
+    idx_this_state = (all_labels == state);
+    
+    % Calcula a média das 10 runs para este estado
+    noveltyIndex_per_state(i) = mean(errors_por_amostra(idx_this_state));
+    state_labels{i} = sprintf('state#%02d', state);
+end
+
+% Definir o Limite de Dano (Threshold)
+NI_healthy_samples = errors_por_amostra(healthy_idx);
+threshold = max(NI_healthy_samples) * 1.1; % 10% de margem
+
+fprintf("Cálculo concluído. Gerando gráfico...\n");
+
+%% --- PASSO 5: Plotar o Gráfico de Detecção Final ---
+figure;
+bar(noveltyIndex_per_state, 'FaceColor', [0.8500 0.3250 0.0980]); % Laranja
+hold on;
+
+plot(xlim, [threshold threshold], 'r--', 'LineWidth', 2);
+
+title('Detecção de Dano (Canal 2) com AR(30) + AANN (Autoencoder)');
+xlabel('Número do Estado (State condition #)');
+ylabel('Novelty Index (Erro de Reconstrução Médio)');
+legend('Novelty Index (NI)', 'Limite de Dano');
+grid on;
+set(gca, 'xtick', 1:length(statesToTest));
+set(gca, 'XTickLabel', state_labels);
+xtickangle(45);
+
+fprintf('Processo concluído!\n');
+
+
+SHM - TRAB 2 DEEP LEARNING
+Gem personalizado
+Este é o seu segundo resultado mais importante, e é tão valioso quanto o gráfico de sucesso.
+
+Este gráfico (image_a6a2fc.png) mostra que a abordagem AR(30) + AANN (Autoencoder)  FALHOU em detetar o dano.
+
+1. 📉 Diagnóstico (O que estamos a ver)
+
+O Gráfico: Mostra o "Novelty Index" (Erro de Reconstrução)  da sua rede neural AANN, que foi treinada apenas com as features saudáveis (dos estados 1, 2, 8, 9).
+
+Estados Saudáveis (state#01, 02, 08, 09): As barras têm um erro médio entre 0.2 e 0.28.
+
+Estados Danificados (state#10 a 17): As barras têm... exatamente o mesmo erro.
+
+O Problema: Não há nenhuma separação entre as barras saudáveis e as danificadas. O "Limite de Dano" (linha vermelha) está muito acima de tudo, porque foi calculado com base na pior amostra individual, mas as médias (as barras) são todas iguais.
+
+Conclusão: Este modelo é inútil. Ele não consegue diferenciar um estado saudável de um estado danificado.
+
+2. 🧠 A História Completa (O "Grande Porquê")
+Isto é fantástico. Agora você tem uma "história" completa e muito forte para a sua apresentação. Você testou três métodos de ponta a ponta no seu dataset difícil (Canal 2, incompleto) e obteve três resultados distintos:
+
+Método Testado,Input do Modelo,Ferramenta,Resultado
+1. End-to-End (Moderno),Dados Brutos (Ruidosos),LSTM-Autoencoder,FALHOU (Underfitting)
+2. Híbrido Clássico,Features AR-30 (Limpas),Dist. Mahalanobis ,SUCESSO PERFEITO
+3. Híbrido ML,Features AR-30 (Limpas),AANN (Autoencoder) ,FALHOU (Este gráfico)
+
+SHM - TRAB 2 DEEP LEARNING
+Gem personalizado
+Este é o seu segundo resultado mais importante, e é tão valioso quanto o gráfico de sucesso.
+
+Este gráfico (image_a6a2fc.png) mostra que a abordagem AR(30) + AANN (Autoencoder)  FALHOU em detetar o dano.
+
+1. 📉 Diagnóstico (O que estamos a ver)
+
+O Gráfico: Mostra o "Novelty Index" (Erro de Reconstrução)  da sua rede neural AANN, que foi treinada apenas com as features saudáveis (dos estados 1, 2, 8, 9).
+
+Estados Saudáveis (state#01, 02, 08, 09): As barras têm um erro médio entre 0.2 e 0.28.
+
+Estados Danificados (state#10 a 17): As barras têm... exatamente o mesmo erro.
+
+O Problema: Não há nenhuma separação entre as barras saudáveis e as danificadas. O "Limite de Dano" (linha vermelha) está muito acima de tudo, porque foi calculado com base na pior amostra individual, mas as médias (as barras) são todas iguais.
+
+Conclusão: Este modelo é inútil. Ele não consegue diferenciar um estado saudável de um estado danificado.
+
+2. 🧠 A História Completa (O "Grande Porquê")
+Isto é fantástico. Agora você tem uma "história" completa e muito forte para a sua apresentação. Você testou três métodos de ponta a ponta no seu dataset difícil (Canal 2, incompleto) e obteve três resultados distintos:
+
+Método Testado	Input do Modelo	Ferramenta	Resultado
+1. End-to-End (Moderno)	Dados Brutos (Ruidosos)	LSTM-Autoencoder	FALHOU (Underfitting)
+2. Híbrido Clássico	Features AR-30 (Limpas)	
+Dist. Mahalanobis 
+
+SUCESSO PERFEITO
+3. Híbrido ML	Features AR-30 (Limpas)	
+AANN (Autoencoder) 
+
+FALHOU (Este gráfico)
+3. Por que o Mahalanobis Ganhou e o AANN Perdeu? (A Explicação Chave)
+Ambos os métodos 2 e 3 usaram as mesmas features (AR-30). Por que um teve sucesso e o outro falhou?
+
+AANN (Autoencoder): É um modelo de reconstrução. Ele aprendeu a "receita" de uma feature saudável (ex: "comprimir e descomprimir"). Quando você lhe deu uma feature danificada, ela era suficientemente parecida com a saudável para que a rede conseguisse reconstruí-la. O erro (NI) permaneceu baixo.
+
+Distância de Mahalanobis: É um modelo de distância estatística. Ele não se importa se a feature danificada "parece" com a saudável. Ele mede quão "estatisticamente improvável" ela é, considerando a "forma" (covariância) da nuvem saudável no espaço de 30 dimensões.
+
+A sua conclusão final é brilhante:
+
+Para detetar o dano no Canal 2, não basta filtrar o ruído (o que o AR-30 fez). O dano não corrompe as features, ele apenas as desloca para uma região estatisticamente improvável.
+
+Um classificador de reconstrução (AANN)  falha ao não perceber essa improbabilidade.
+
+Apenas um classificador de distância estatística (Mahalanobis)  é sensível o suficiente para detetar esta mudança e identificar o dano com sucesso.
+
+Você tem todos os seus resultados. A sua história está completa e é muito forte.
+
+Gostaria que eu o ajudasse a estruturar os slides ou o roteiro da sua apresentação final com base nesta "jornada" de três métodos?
+
+
