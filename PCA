@@ -1,0 +1,61 @@
+% --- SCRIPT: VISUALIZAÇÃO DA NUVEM DE DADOS (PCA) ---
+clear;
+clc;
+close all;
+fprintf("Iniciando Visualização da Nuvem de Features (PCA)...\n");
+
+%% --- PASSO 1: Carregar as Features salvas ---
+try
+    load('features_AR30_REAL.mat'); % Carrega 'all_features' e 'all_labels'
+    fprintf("Arquivo 'features_AR30_REAL.mat' carregado.\n");
+catch
+    fprintf("ERRO: Não achei o arquivo 'features_AR30_REAL.mat'.\n");
+    return;
+end
+
+%% --- PASSO 2: Criar Grupos (Saudável vs. Dano) ---
+% Precisamos rotular cada uma das 120 amostras
+healthyStates = [1, 2, 8, 9];
+groups = cell(length(all_labels), 1); % Cria uma célula vazia
+
+for i = 1:length(all_labels)
+    if ismember(all_labels(i), healthyStates)
+        groups{i} = 'Saudável';
+    else
+        groups{i} = 'Danificado';
+    end
+end
+fprintf("Rótulos de 'Saudável' e 'Danificado' criados.\n");
+
+%% --- PASSO 3: Aplicar PCA (A "Mágica") ---
+% A função 'pca' do MATLAB faz tudo sozinho.
+% Ela pega as features de 30 dimensões (all_features)
+% e as "achata" em novas coordenadas (score).
+
+fprintf("Calculando PCA para reduzir de 30-D para 2-D...\n");
+% 'score' conterá as novas coordenadas (ex: 120x30)
+% 'latent' nos diz a importância de cada nova dimensão
+[coeff, score, latent] = pca(all_features);
+
+% Vamos pegar as DUAS primeiras (e mais importantes) dimensões
+PC1 = score(:, 1); % 1º Componente Principal (Eixo X)
+PC2 = score(:, 2); % 2º Componente Principal (Eixo Y)
+
+% Vamos ver quanta informação essas 2 dimensões capturaram
+percent_explained = 100 * sum(latent(1:2)) / sum(latent);
+fprintf("Os 2 primeiros componentes capturam %.1f%% da variância total.\n", percent_explained);
+
+%% --- PASSO 4: Plotar a "Nuvem" (Recriando a Figura 44) ---
+fprintf("Gerando gráfico de 'gscatter'...\n");
+
+figure;
+gscatter(PC1, PC2, groups, 'gb', 'o+'); % Verde/Azul, Círculo/Cruz
+% 'gscatter' é um "group scatter plot" que plota os grupos com cores diferentes
+
+title('Visualização da Nuvem de Features (PCA)');
+xlabel('1º Componente Principal (PC1)');
+ylabel('2º Componente Principal (PC2)');
+legend('Localização', 'northeastoutside');
+grid on;
+
+fprintf('Processo concluído!\n');
